@@ -1,0 +1,89 @@
+.share-control { position: relative; }
+.share-menu { position: absolute; z-index: 35; bottom: calc(100% + 12px); left: 50%; width: 236px; max-width: 80vw; transform: translateX(-50%); padding: 8px; background: #202020; border: 1px solid #333; border-radius: 14px; box-shadow: 0 12px 40px #0007; }
+#view-studio .studio-toolbar .share-menu button { display: flex; align-items: center; gap: 13px; width: 100%; min-height: 48px; padding: 12px; text-align: left; border: 0; border-radius: 9px; background: transparent; font-size: 14px; }
+#view-studio .studio-toolbar .share-menu button:hover, #view-studio .studio-toolbar .share-menu button:focus-visible { background: #303030; }
+.share-menu svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.presentation-badge { margin-left: auto; padding: 0 5px; color: #dbf5a0; background: #414d30; border-radius: 5px; }
+.presentation-dialog { width: min(480px, calc(100vw - 40px)); max-height: 85vh; padding: 24px; color: var(--text); background: #1b1b20; border: 1px solid #36363f; border-radius: 18px; }
+.presentation-dialog::backdrop { background: #0009; }
+.presentation-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.presentation-dialog-heading h2 { margin: 0; font-size: 21px; }
+.presentation-dialog-heading button { padding: 2px 10px; font-size: 25px; background: transparent; border: 0; }
+.presentation-dropzone { display: grid; justify-items: center; gap: 8px; width: 100%; margin: 22px 0 14px; padding: 30px 14px; border: 1px dashed #777084; border-radius: 12px; background: #242329; }
+.presentation-dropzone strong { color: #d1beff; font-size: 16px; }
+.presentation-dropzone small, .presentation-dropzone > span:not(.upload-symbol) { color: var(--muted); }
+.presentation-dropzone.dragging { background: #30283d; border-color: #c4afff; }
+.upload-symbol { font-size: 34px; color: #d1beff; }
+.presentation-status { min-height: 22px; margin-bottom: 0; overflow-wrap: anywhere; }
+.presentation-status.error { color: #ffaaa8; }
+.presentation-deck { flex: none; min-width: 0; padding: 0 2px 4px; background: #101010; }
+.presentation-controls { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 30px; margin: 0 4px 4px; color: #dedce3; }
+.presentation-controls button { flex: none; min-width: 32px; padding: 0 7px; font-size: 25px; line-height: 30px; background: #303034; border: 0; }
+.presentation-name { flex: 1; margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #aaa5b4; }
+.slide-position { display: flex; align-items: center; gap: 5px; margin: 0; white-space: nowrap; font-size: 12px; }
+.slide-position select { width: auto; max-width: 65px; margin: 0; padding: 5px; border-color: #555; background: #303034; }
+.presentation-controls .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.presentation-thumbnails { display: flex; align-items: stretch; gap: 10px; max-width: 100%; padding: 2px 0 6px; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; scrollbar-color: #625477 #151515; }
+.slide-thumbnail { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 7px; border: 2px solid transparent; border-radius: 11px; background: transparent; color: #f5f2fa; }
+.slide-thumbnail:hover:not(:disabled) { background: #242025; border-color: #75608e; }
+.slide-thumbnail.selected { background: #9564ff; border-color: #ad85ff; }
+.slide-thumbnail.selected:hover:not(:disabled) { background: #9564ff; border-color: #d4bdff; }
+.slide-thumbnail:focus-visible { outline: 2px solid #e1d4ff; outline-offset: 1px; }
+.slide-thumbnail img { display: block; width: 128px; height: 72px; object-fit: contain; background: #25252a; border-radius: 7px; }
+.slide-thumbnail img.thumbnail-unavailable { visibility: hidden; }
+.slide-number { min-width: 17px; font-size: 13px; font-weight: 600; text-align: center; }
+.presentation-canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #101010; }
+.shared-content-slot { display: grid; place-items: center; align-self: stretch; min-width: 0; min-height: 0; container-type: size; }
+.setup-mode .shared-content-slot,
+#view-studio[data-layout="camera"] .shared-content-slot { display: none; }
+#view-studio[data-layout="side"] .shared-content-slot,
+#view-studio[data-layout="focus"] .shared-content-slot { order: -1; }
+#view-studio .shared-content-slot .screen-tile {
+  width: min(100cqw, calc(100cqh * 16 / 9)); max-width: 100%; height: auto;
+  aspect-ratio: 16 / 9; align-self: center; justify-self: center;
+}
+.screen-glow-on.screen-glow-sharing #view-studio .shared-content-slot .screen-tile {
+  --glow-content-width: max(0px, calc(100cqw - var(--shared-glow-clearance, 0px) * 2));
+  --glow-content-height: max(0px, calc(100cqh - var(--shared-glow-clearance, 0px) * 2));
+  width: min(var(--glow-content-width), calc(var(--glow-content-height) * 16 / 9));
+}
+#view-studio .screen-tile video,
+#view-studio .screen-tile .presentation-canvas { width: 100%; height: 100%; object-fit: contain; }
+.shared-content-actions { position: absolute; z-index: 10; top: 10px; right: 10px; left: 10px; display: flex; justify-content: flex-end; pointer-events: none; }
+.shared-content-menu-button {
+  display: grid; place-items: center; width: 36px; height: 34px; padding: 0 0 7px;
+  border: 1px solid #ffffff14; border-radius: 9px; background: #242426ed; color: #fff;
+  font-size: 26px; line-height: 1; opacity: 0; pointer-events: none;
+  transition: opacity .12s ease, background .12s ease;
+}
+.screen-tile:hover .shared-content-menu-button,
+.screen-tile:focus-within .shared-content-menu-button,
+.shared-content-actions.menu-open .shared-content-menu-button { opacity: 1; pointer-events: auto; }
+.shared-content-menu-button:hover:not(:disabled) { background: #3a363fee; }
+.shared-content-menu-button:focus-visible,
+.shared-content-menu button:focus-visible { outline: 2px solid #c4acff; outline-offset: 2px; }
+.shared-content-menu {
+  position: absolute; top: 42px; right: 0; width: min(222px, 100%); padding: 5px;
+  pointer-events: auto; color: #f3eff7; background: #242326; border: 1px solid #46404c;
+  border-radius: 10px; box-shadow: 0 8px 22px #0005;
+}
+.shared-content-menu button { display: block; width: 100%; padding: 12px 10px; border: 0; border-radius: 6px; background: transparent; color: #ffb0b0; font-size: 13px; text-align: left; }
+.shared-content-menu button:hover:not(:disabled) { background: #393137; }
+@media (hover: none) { .shared-content-menu-button { opacity: 1; pointer-events: auto; } }
+#view-studio[data-presentation="document"] #screenPreview,
+#view-studio[data-presentation="document"] #presentationLabel { display: none; }
+#view-studio.is-sharing[data-layout="focus"] .previews { grid-template-columns: minmax(0, 1fr) clamp(190px, 21vw, 330px); background: #101010; padding: 0; gap: 20px; }
+#view-studio.is-sharing[data-layout="focus"] .screen-tile { background: #151515; border-radius: 12px; min-height: 0; }
+#view-studio.is-sharing[data-layout="focus"] .camera-tile { align-self: center; height: auto; aspect-ratio: 16 / 9; border: 4px solid #a478ff; border-radius: 11px; background: #151515; overflow: hidden; }
+#view-studio.is-sharing[data-layout="focus"] .camera-tile video { object-fit: cover; }
+#view-studio .studio-toolbar #btnStopScreen { color: #c6a9ff; background: #251b3b; }
+#view-studio .studio-toolbar #btnStopScreen::before { content: '▣'; display: block; margin-bottom: 2px; font-size: 18px; line-height: 18px; }
+.in-studio #studioRail { align-self: stretch; min-width: 60px; background: #151515; }
+@media (max-width: 1000px) {
+  #view-studio.is-sharing[data-layout="focus"] .previews { grid-template-columns: minmax(0, 1fr) 190px; gap: 12px; }
+  .slide-thumbnail img { width: 112px; height: 63px; }
+}
+@media (max-height: 720px) {
+  .slide-thumbnail img { width: 100px; height: 56px; }
+  .presentation-thumbnails { gap: 6px; }
+}

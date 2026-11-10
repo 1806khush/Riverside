@@ -1,0 +1,86 @@
+{
+  "name": "cpe-studio",
+  "productName": "CPE Studio",
+  "version": "1.5.2",
+  "private": true,
+  "description": "Local lecture recording studio with PDF slides and teleprompter",
+  "author": "CPE Studio",
+  "main": "electron/main.cjs",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "setup": "node scripts/setup-runtime.cjs",
+    "start": "electron .",
+    "check": "node --check electron/main.cjs && node --check electron/smoke.cjs && node --check scripts/setup-runtime.cjs && node --check app.js && node --check host-name.js && node --check teleprompter.js && node --check camera-effects.js && node --check camera-effects-worker.js && node --check effects-panel.js && node --check presentations.js && node --check scripts/setup-camera-models.cjs",
+    "test": "electron . --smoke-test",
+    "package": "node scripts/check-runtime.cjs && electron-builder --dir",
+    "dist": "node scripts/check-runtime.cjs && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "edu.cpe.studio.electron",
+    "productName": "CPE Studio",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".build/runtime",
+        "to": "runtime",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": ".",
+        "to": "studio",
+        "filter": [
+          "*.html",
+          "*.css",
+          "*.js",
+          "server.py",
+          "vendor/**/*",
+          "models/face_landmarker.task",
+          "models/selfie_multiclass_256x256.tflite",
+          "presentations.py"
+        ]
+      }
+    ],
+    "asar": true,
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "identity": "-",
+      "hardenedRuntime": false,
+      "minimumSystemVersion": "26.0",
+      "category": "public.app-category.education",
+      "extendInfo": {
+        "NSCameraUsageDescription": "CPE Studio uses your camera to record lectures locally.",
+        "NSMicrophoneUsageDescription": "CPE Studio records lecture audio locally.",
+        "NSScreenCaptureUsageDescription": "CPE Studio records the presentation you choose to share."
+      }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "artifactName": "CPE-Studio-${version}-${os}-${arch}.${ext}"
+  }
+}
