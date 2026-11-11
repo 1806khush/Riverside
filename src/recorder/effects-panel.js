@@ -1,4 +1,4 @@
-'use strict';
+import { $, S, cameraEffects } from './app.js';
 
 const effectsPanel = $('backgroundEffectsPanel');
 let lowLightSince = 0;

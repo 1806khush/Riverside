@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const { S, DB, recElapsed, canShare, shareScreen, attachSharedStream, updateControls, toast } = window.CPE;
+  const { S, recElapsed, canShare, shareScreen, attachSharedStream, updateControls, toast } = window.CPE;
   const $ = id => document.getElementById(id);
   const menu = $('shareMenu'), dialog = $('presentationDialog'), fileInput = $('presentationFile');
   const controls = $('presentationControls'), status = $('presentationStatus');
@@ -141,12 +141,11 @@
     if (!S.recording || S.paused || !S.session || current !== deck) return;
     S.session.presentation = { name: deck.name, pages: deck.pages, source: deck.format || 'pdf' };
     S.session.events.push({ kind: 'slide', page: deck.page, t: initial ? 0 : Math.round(recElapsed()) });
-    S.writes.push(DB.putSession(S.session));
   }
 
   async function upload(file) {
     if (importing || !canShare()) return;
-    if (!/\.pdf$/i.test(file.name)) return feedback('Choose a PDF file. PowerPoint uploads are not supported in this desktop version.', true);
+    if (!/\.pdf$/i.test(file.name)) return feedback('Choose a PDF file. Export your PowerPoint as a PDF first.', true);
     if (!file.size || file.size > 100 * 1024 * 1024) return feedback('Choose a non-empty file smaller than 100 MB.', true);
     importing = true; S.choosingScreen = true;
     const session = S.recording ? S.session : null;

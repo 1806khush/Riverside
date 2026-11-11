@@ -48,7 +48,7 @@ class PresentationStore:
             name = Path(unquote(filename).replace('\\', '/')).name
             suffix = Path(name).suffix.lower()
             if suffix != '.pdf':
-                raise ValueError('Choose a PDF file. PowerPoint uploads are not supported in this desktop version.')
+                raise ValueError('Choose a PDF file. Export your PowerPoint as a PDF first.')
             if not 0 < length <= MAX_BYTES:
                 raise ValueError('Choose a non-empty presentation smaller than 100 MB.')
             with self.lock:

@@ -1,13 +1,17 @@
-'use strict';
-/* CPE Studio - local recording app
+import { CameraEffects } from './camera-effects.js';
+import { DB } from './storage';
+import { CHUNK_MS, createRecordingFiles, lockRecording, readRecordingFiles } from './recording-files';
+import { recoverRecordings } from './recording-recovery';
+import { errorName, heapUsed, logRecording, storageEstimate } from './recording-log';
+/* Mosaic Web - local recording app
  * Camera+mic and screen/slides are recorded as separate synchronized tracks
- * and written to IndexedDB in 4s chunks.
+ * and committed to local storage about every five seconds.
  *
  * Camera/mic on-off never disables a recorded track: the camera goes through a frame transformer that
  * swaps in black frames, and the mic goes through a gain node. The recorders therefore always get
  * continuous data and cannot stall when a device is switched off. */
 
-const $ = id => document.getElementById(id);
+export const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const pad = n => String(n).padStart(2, '0');
 const fmtTime = sec => { const s = Math.max(0, Math.floor(sec || 0)); const h = Math.floor(s / 3600); return (h ? pad(h) + ':' : '') + pad(Math.floor(s % 3600 / 60)) + ':' + pad(s % 60); };
@@ -18,43 +22,16 @@ function toast(msg, err) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), err ? 9000 : 3500);
 }
 
-/* ---------------- IndexedDB ---------------- */
-const DB = (() => {
-  let db;
-  const open = () => db ? Promise.resolve(db) : new Promise((res, rej) => {
-    const r = indexedDB.open('cpe-studio', 1);
-    r.onupgradeneeded = () => {
-      const d = r.result;
-      d.createObjectStore('sessions', { keyPath: 'id' });
-      d.createObjectStore('chunks', { autoIncrement: true }).createIndex('sessionId', 'sessionId');
-    };
-    r.onsuccess = () => { db = r.result; res(db); };
-    r.onerror = () => rej(r.error);
-  });
-  const run = (store, mode, fn) => open().then(d => new Promise((res, rej) => {
-    const t = d.transaction(store, mode);
-    const r = fn(t.objectStore(store));
-    t.oncomplete = () => res(r && 'result' in r ? r.result : undefined);
-    t.onerror = t.onabort = () => rej(t.error);
-  }));
-  return {
-    putSession: s => run('sessions', 'readwrite', st => st.put(JSON.parse(JSON.stringify(s)))),
-    getSession: id => run('sessions', 'readonly', st => st.get(id)),
-    putChunk: c => run('chunks', 'readwrite', st => st.add(c)),
-    getChunks: id => run('chunks', 'readonly', st => st.index('sessionId').getAll(id))
-  };
-})();
-
 /* ---------------- State ---------------- */
 const pick = list => (window.MediaRecorder && list.find(m => MediaRecorder.isTypeSupported(m))) || '';
 const VMIME = pick(['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']);
 const CAN_TRANSFORM = !!(window.MediaStreamTrackProcessor && window.MediaStreamTrackGenerator && window.VideoFrame && window.OffscreenCanvas);
 
-const S = {
+export const S = {
   raw: null, cam: null, micStream: null, screen: null,
   ac: null, micGain: null, micAn: null, scrAn: null, vFallbackTrack: null,
   recs: [], recording: false, paused: false,
-  t0: 0, pausedMs: 0, pauseAt: null, session: null, writes: [],
+  t0: 0, pausedMs: 0, pauseAt: null, session: null, capture: null,
   timer: null, saveTimer: null, raf: null, camOn: true, micOn: true
 };
 const recElapsed = () => S.recording ? (S.pauseAt ?? performance.now()) - S.t0 - S.pausedMs : 0;
@@ -88,7 +65,7 @@ function resumeCameraPreview() {
 
 document.addEventListener('pointerdown', () => { if (S.ac && S.ac.state === 'suspended') S.ac.resume(); });
 
-const cameraEffects = CAN_TRANSFORM ? new CameraEffects((state, face) => {
+export const cameraEffects = CAN_TRANSFORM ? new CameraEffects((state, face) => {
   const button = $('btnCameraEffects');
   const status = $('cameraEffectsStatus');
   const guide = $('faceGuide');
@@ -103,8 +80,8 @@ const cameraEffects = CAN_TRANSFORM ? new CameraEffects((state, face) => {
   grid.classList.toggle('hidden', !visible);
   guide.classList.toggle('centered', centered);
   status.classList.toggle('centered', centered);
-  if (state === 'error') toast('Camera effects could not load. Restart CPE Studio and try again.', true);
-  if (state === 'background-error') toast('The background effect could not load. Restart CPE Studio and try again.', true);
+  if (state === 'error') toast('Camera effects could not load. Reload the page and try again.', true);
+  if (state === 'background-error') toast('The background effect could not load. Reload the page and try again.', true);
   const message = state === 'loading' ? 'Checking your framing…' : cameraEffects.framing.message;
   if (status.textContent !== message) status.textContent = message;
   if (visible) {
@@ -353,7 +330,7 @@ async function refreshDevices() {
 }
 
 async function openCamera() {
-  if (S.recording || S.countingDown || S.switchingDevices) return;
+  if (S.recording || S.starting || S.saving || S.countingDown || S.switchingDevices) return;
   S.switchingDevices = true;
   updateControls();
   const cam = $('camSel').value, mic = $('micSel').value;
@@ -365,9 +342,9 @@ async function openCamera() {
     });
   } catch (e) {
     $('noCam').textContent = e.name === 'NotReadableError'
-      ? 'The camera is being used by another app or browser tab (Teams, Zoom, Camera app, or another CPE Studio tab). Close it, then click "Retry camera".'
+      ? 'The camera is being used by another app or browser tab (Teams, Zoom, Camera app, or another Mosaic Web tab). Close it, then click "Retry camera".'
       : e.name === 'NotAllowedError'
-        ? 'Camera/microphone permission was blocked. Allow access in your system or browser privacy settings, reopen CPE Studio if required, then click "Retry camera".'
+        ? 'Camera/microphone permission was blocked. Allow access in your system or browser privacy settings, reload the page if required, then click "Retry camera".'
         : 'Could not open camera or microphone: ' + e.message;
     $('noCam').classList.remove('hidden'); $('btnEnable').classList.remove('hidden');
     S.switchingDevices = false;
@@ -431,14 +408,16 @@ function attachSharedStream(stream, session) {
   }
   if (session) {
     const recorder = createTrackRecorder('screen', stream, { videoBitsPerSecond: 6e6 });
-    session.tracks.screen.offsetMs = Math.round(recElapsed());
-    try { recorder.rec.start(4000); }
+    try { startTrack(recorder); }
     catch (error) { delete session.tracks.screen; S.recs.pop(); throw error; }
   }
   S.screen = stream;
   $('screenPreview').srcObject = stream;
   stream.getVideoTracks()[0].addEventListener('ended', () => {
-    if (S.screen === stream) onScreenEnded();
+    if (S.screen === stream) {
+      if (S.recording && S.session.tracks.screen) logRecording('screen_sharing_ended', S.session.id, { elapsedMs: Math.round(recElapsed()) });
+      onScreenEnded();
+    }
   });
   if ($('view-studio').dataset.layout === 'camera') document.querySelector('[data-stage-layout="focus"]').click();
   attachScreenMeter();
@@ -487,6 +466,7 @@ function onScreenEnded() {
   const stream = S.screen;
   const r = S.recs.find(x => x.name === 'screen');
   if (S.recording && r) {
+    logRecording('screen_recording_ended', S.session.id, { elapsedMs: Math.round(recElapsed()) });
     r.expected = true;
     S.session.tracks.screen.endedAtMs = Math.round(recElapsed());
   }
@@ -561,7 +541,7 @@ function updateControls() {
   $('btnSharedContentMenu').disabled = $('btnStopSharedContent').disabled = $('btnStopScreen').disabled;
   if (!S.screen || $('btnStopScreen').disabled) closeSharedContentMenu();
   $('btnCamToggle').disabled = $('btnMicToggle').disabled = !S.cam;
-  $('btnStart').disabled = !S.cam || S.recording || S.countingDown || S.switchingDevices || S.choosingScreen;
+  $('btnStart').disabled = !S.cam || S.recording || S.starting || S.saving || S.countingDown || S.switchingDevices || S.choosingScreen;
   $('btnJoin').disabled = !S.cam || S.switchingDevices;
   $('btnTestCamera').disabled = !S.cam?.getVideoTracks().some(track => track.readyState === 'live') || S.recording || S.switchingDevices;
   $('btnTestMic').disabled = !S.micStream || S.recording || S.switchingDevices;
@@ -576,68 +556,174 @@ function updateControls() {
 }
 
 /* ---------------- Recording ---------------- */
-function createTrackRecorder(name, stream, opts) {
-  const sessionId = S.session.id;
+function createTrackRecorder(name, stream, opts, source = stream) {
   const rec = new MediaRecorder(stream, { mimeType: VMIME, ...opts });
-  const r = { name: name, rec, expected: false };
-  const info = { mime: VMIME, hasVideo: stream.getVideoTracks().length > 0, hasAudio: stream.getAudioTracks().length > 0 };
+  const info = { mime: rec.mimeType || VMIME, hasVideo: stream.getVideoTracks().length > 0, hasAudio: stream.getAudioTracks().length > 0 };
   S.session.tracks[name] = info;
-  let seq = 0;
-  rec.ondataavailable = e => { if (e.data && e.data.size) S.writes.push(DB.putChunk({ sessionId: sessionId, track: name, seq: seq++, blob: e.data })); };
-  rec.onerror = e => { S.session.issues.push(`${name}: ${e.error && e.error.message}`); toast(`Recorder error on ${name}: ${e.error && e.error.message}`, true); };
+  const capture = S.capture;
+  const r = { name, rec, info, expected: false };
+  r.stopped = new Promise(resolve => rec.addEventListener('stop', resolve, { once: true }));
+  rec.ondataavailable = event => queueChunk(capture, r, event);
+  rec.onerror = event => {
+    logRecording('media_recorder_error', capture.id, { track: name, error: errorName(event.error) });
+    if (S.capture === capture && !S.saving) void interruptRecording('The ' + name + ' recorder reported an error.');
+  };
   rec.addEventListener('stop', () => {
-    if (S.recording && !r.expected) {
-      const msg = `${name} recorder stopped unexpectedly at ${fmtTime(recElapsed() / 1000)}`;
-      S.session.issues.push(msg); toast(msg, true);
+    if (S.capture !== capture || r.expected) return;
+    logRecording('recorder_stopped_unexpectedly', capture.id, { track: name });
+    if (name === 'camera') {
+      if (!S.saving) void interruptRecording('The camera recorder stopped unexpectedly.');
+    } else {
+      info.endedAtMs = Math.round(recElapsed());
+      S.session.issues.push('Screen recording stopped unexpectedly.');
+      if (S.screen === source) onScreenEnded();
+      toast('Screen recording stopped. The camera is still recording.', true);
     }
   });
-  r.p = new Promise(res => rec.addEventListener('start', () => { info.startPerf = performance.now(); info.startEpoch = Date.now(); res(); }, { once: true }));
+  for (const track of source.getTracks()) {
+    const onEnded = () => {
+      if (S.capture !== capture || r.expected) return;
+      logRecording('media_track_ended', capture.id, { track: name, kind: track.kind });
+      if (name === 'camera' && !S.saving) void interruptRecording('The ' + (track.kind === 'audio' ? 'microphone' : 'camera') + ' disconnected.');
+    };
+    track.addEventListener('ended', onEnded);
+    capture.listeners.push(() => track.removeEventListener('ended', onEnded));
+  }
   S.recs.push(r);
-  r.stopped = new Promise(resolve => rec.addEventListener('stop', resolve, { once: true }));
+  const { width, height, frameRate } = source.getVideoTracks()[0]?.getSettings() ?? {};
+  logRecording('recorder_configured', capture.id, { track: name, mime: info.mime, width, height, frameRate, hasAudio: info.hasAudio });
   return r;
 }
 
-async function startRecording() {
-  if (S.recording) return;
-  if (!S.cam?.getVideoTracks().length || !S.cam.getAudioTracks().length) return toast('Allow the camera and microphone first.', true);
-  if (!VMIME) return toast('This browser cannot record WebM. Use Chrome or Edge.', true);
-  if (S.ac) { await S.ac.resume(); if (S.ac.state !== 'running') return toast('Audio engine is not running. Click the page and try again.', true); }
-  const id = 's_' + Date.now().toString(36);
-  S.session = {
-    id, title: $('title').value.trim() || 'Untitled lecture', status: 'recording', createdAt: new Date().toISOString(),
-    durationMs: 0, tracks: {}, events: [], issues: [], app: 'cpe-studio/1.4'
-  };
-  S.writes = []; S.recs = [];
-
-  const defs = [{ name: 'camera', stream: S.cam, mime: VMIME, opts: { videoBitsPerSecond: 5e6, audioBitsPerSecond: 128000 } }];
-  if (S.screen?.getVideoTracks().some(track => track.readyState === 'live')) defs.push({ name: 'screen', stream: new MediaStream(S.screen.getVideoTracks()), mime: VMIME, opts: { videoBitsPerSecond: 6e6, audioBitsPerSecond: 128000 } });
-
-  const started = defs.map(({ name, stream, opts }) => createTrackRecorder(name, stream, opts));
-
-  S.starting = true;
-  S.recording = true; S.paused = false; S.pausedMs = 0; S.pauseAt = null; S.t0 = performance.now();
-  applyToggles(); updateControls();
-  started.forEach(r => r.rec.start(4000));   // all tracks start in the same tick
-  await Promise.all(started.map(r => r.p));
-
-  const infos = Object.values(S.session.tracks);
-  const base = Math.min(...infos.map(t => t.startPerf));
-  infos.forEach(t => { t.offsetMs = Math.round(t.startPerf - base); });
-  S.session.startEpoch = Math.min(...infos.map(t => t.startEpoch));
-  S.t0 = base;
-  await DB.putSession(S.session);
-
-  S.timer = setInterval(() => { $('timer').textContent = fmtTime(recElapsed() / 1000); }, 250);
-  S.saveTimer = setInterval(saveProgress, 10000);
-  S.starting = false;
-  window.dispatchEvent(new Event('recording-started'));
-  updateControls();
+function queueChunk(capture, recorder, event) {
+  if (!capture.accepting || capture.failed || !event.data.size) return;
+  const { name } = recorder;
+  const seq = recorder.nextSeq ?? 0;
+  recorder.nextSeq = seq + 1;
+  const size = event.data.size;
+  const endMs = Math.round(recElapsed());
+  const details = { track: name, seq, size, endMs, timecodeMs: event.timecode };
+  logRecording('chunk_received', capture.id, details);
+  if (capture.queued >= 8 || capture.queuedBytes + size > 64 * 1024 * 1024) {
+    recordingWriteFailed(capture, new DOMException('Local storage is not keeping up.', 'TimeoutError'));
+    return;
+  }
+  capture.queued++;
+  capture.queuedBytes += size;
+  capture.pending = capture.pending.then(async () => {
+    if (capture.failed || capture.discardPending) return;
+    const checkpoint = { ...S.session, durationMs: Math.max(S.session.durationMs, endMs) };
+    logRecording('chunk_write_started', capture.id, details);
+    try {
+      const savedAt = await capture.files.write({ sessionId: capture.id, track: name, seq, size, endMs, blob: event.data }, structuredClone(checkpoint));
+      S.session.lastSavedAt = savedAt;
+      S.session.durationMs = checkpoint.durationMs;
+      capture.committed++;
+      capture.last = { ...details, savedAt: S.session.lastSavedAt };
+      logRecording('chunk_write_completed', capture.id, { ...details, savedAt: capture.last.savedAt });
+      renderStorageStatus();
+    } catch (error) {
+      logRecording('chunk_write_failed', capture.id, { ...details, error: errorName(error) });
+      recordingWriteFailed(capture, error);
+    }
+  }).finally(() => {
+    capture.queued--;
+    capture.queuedBytes -= size;
+  });
 }
 
-function saveProgress() {
-  if (!S.session) return;
-  S.session.durationMs = Math.round(recElapsed());
-  return DB.putSession(S.session);
+function recordingWriteFailed(capture, error) {
+  if (capture.failed) return;
+  capture.failed = true;
+  capture.error = errorName(error) === 'QuotaExceededError'
+    ? 'Local storage is full or unavailable. Free space before recording again.'
+    : 'Mosaic Web could not save video fast enough.';
+  if (import.meta.env.DEV && capture.simulatingFailure) capture.error = 'Simulated storage write failed as expected.';
+  logRecording('recording_storage_error', capture.id, { error: errorName(error) });
+  if (S.capture === capture && !S.saving && !S.starting) void interruptRecording(capture.error);
+}
+
+let storageInfo = {};
+function renderStorageStatus() {
+  const capture = S.capture;
+  const status = $('recordingStorageStatus');
+  status.classList.toggle('hidden', !S.recording && !capture?.error);
+  const saved = capture?.last?.savedAt;
+  const storage = storageInfo.usage === undefined ? 'Storage usage unavailable' : formatBytes(storageInfo.usage) + ' used locally';
+  $('recordingStorageDetails').textContent = [
+    saved ? 'Saved ' + new Date(saved).toLocaleTimeString() : 'Waiting for first save',
+    storage,
+  ].join(' · ');
+  $('recordingStorageError').textContent = capture?.error || '';
+}
+
+function formatBytes(bytes) {
+  if (bytes === undefined) return 'Unavailable';
+  const mb = bytes / 1024 ** 2;
+  return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb.toFixed(1) + ' MB';
+}
+
+async function updateStorageEstimate(capture) {
+  storageInfo = await storageEstimate();
+  if (S.capture !== capture) return;
+  logRecording('storage_sample', capture.id, { ...storageInfo, heapBytes: heapUsed() });
+  renderStorageStatus();
+}
+
+function startTrack(r) {
+  r.info.offsetMs = Math.max(0, Math.round(recElapsed()));
+  r.rec.start(CHUNK_MS);
+}
+
+async function startRecording({ stressTest = false } = {}) {
+  if (S.recording || S.starting || S.saving) return;
+  if (!S.cam?.getVideoTracks().length || !S.cam.getAudioTracks().length
+    || !S.raw?.getVideoTracks().some(track => track.readyState === 'live')
+    || !S.raw.getAudioTracks().some(track => track.readyState === 'live'))
+    return toast('Allow the camera and microphone first.', true);
+  if (!VMIME || !navigator.locks) return toast('Use a current version of Chrome or Edge to record and recover lectures.', true);
+  const id = crypto.randomUUID();
+  const capture = { id, pending: Promise.resolve(), queued: 0, queuedBytes: 0, committed: 0, accepting: true, listeners: [] };
+  S.capture = capture;
+  S.starting = true;
+  S.recs = [];
+  updateControls();
+  void navigator.storage?.persist?.().then(granted => logRecording('storage_persistence_requested', id, { granted }))
+    .catch(error => logRecording('storage_persistence_failed', id, { error: errorName(error) }));
+  try {
+    if (S.ac) { await S.ac.resume(); if (S.ac.state !== 'running') throw new Error('Audio engine is not running. Click the page and try again.'); }
+    capture.release = await lockRecording(id);
+    capture.files = await createRecordingFiles();
+    S.session = {
+      id, title: stressTest ? 'Stress recording' : $('title').value.trim() || 'Untitled lecture',
+      status: 'recording', createdAt: new Date().toISOString(), storage: capture.files.storage,
+      durationMs: 0, tracks: {}, events: [], issues: [], app: 'mosaic-web', stressTest,
+    };
+    createTrackRecorder('camera', S.cam, { videoBitsPerSecond: 5e6, audioBitsPerSecond: 128000 }, S.raw);
+    if (S.screen?.getVideoTracks().some(track => track.readyState === 'live')) {
+      createTrackRecorder('screen', new MediaStream(S.screen.getVideoTracks()), { videoBitsPerSecond: 6e6 }, S.screen);
+    }
+    // Write session metadata before any chunk can be emitted.
+    await DB.putSession(S.session);
+    S.recording = true; S.paused = false; S.pausedMs = 0; S.pauseAt = null; S.t0 = performance.now();
+    S.recs.forEach(startTrack);
+    logRecording('recording_started', id, {
+      browser: navigator.userAgent, platform: navigator.platform, storage: capture.files.storage, stressTest,
+    });
+    S.timer = setInterval(() => { $('timer').textContent = fmtTime(recElapsed() / 1000); }, 250);
+    S.saveTimer = setInterval(() => void updateStorageEstimate(capture), 10000);
+    void updateStorageEstimate(capture);
+    window.dispatchEvent(new Event('recording-started'));
+  } catch (error) {
+    capture.accepting = false;
+    stopTrackRecorders();
+    closeCapture(capture);
+    logRecording('recording_start_failed', id, { error: errorName(error) });
+    throw error;
+  } finally {
+    S.starting = false;
+    applyToggles(); updateControls(); renderStorageStatus();
+  }
 }
 
 function togglePause() {
@@ -649,100 +735,210 @@ function togglePause() {
     S.recs.forEach(r => r.rec.state === 'paused' && r.rec.resume());
     S.pausedMs += performance.now() - S.pauseAt; S.pauseAt = null; S.paused = false;
   }
+  logRecording(S.paused ? 'recording_paused' : 'recording_resumed', S.session.id, { elapsedMs: Math.round(recElapsed()) });
   updateControls();
+}
+
+function stopTrackRecorders() {
+  for (const r of S.recs) {
+    r.expected = true;
+    if (r.rec.state !== 'inactive') r.rec.stop();
+  }
+}
+
+function closeCapture(capture) {
+  clearInterval(S.timer);
+  clearInterval(S.saveTimer);
+  capture.accepting = false;
+  capture.listeners.forEach(remove => remove());
+  capture.files?.close();
+  capture.release?.();
+  S.saving = false;
+  S.recording = false;
+  S.paused = false;
+  S.pauseAt = null;
+  $('timer').textContent = '00:00';
+  updateControls(); renderStorageStatus();
+}
+
+async function waitForTrackStop() {
+  let timer;
+  try {
+    await Promise.race([
+      Promise.all(S.recs.map(r => r.stopped)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new DOMException('The recorder did not finish.', 'TimeoutError')), 15000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function stopRecording() {
   if (!S.recording || S.starting || S.saving) return;
+  const capture = S.capture;
   const duration = Math.round(recElapsed());
   S.saving = true;
   clearInterval(S.timer);
   clearInterval(S.saveTimer);
   updateControls();
+  logRecording('recording_stopping', capture.id, { durationMs: duration });
   window.dispatchEvent(new Event('recording-stopped'));
+  let saved = false;
   try {
-    S.recs.forEach(r => { r.expected = true; });
-    await Promise.all(S.recs.map(r => {
-      if (r.rec.state !== 'inactive') r.rec.stop();
-      return r.stopped;
-    }));
-    // MediaRecorder emits its final dataavailable event before stop.
-    await Promise.all(S.writes);
-    S.session.durationMs = duration;
-    S.session.status = 'complete';
-    await DB.putSession(S.session);
+    stopTrackRecorders();
+    // MediaRecorder delivers final chunks before the stop events.
+    await waitForTrackStop();
+    await capture.pending;
+    if (capture.failed) throw new Error(capture.error);
+    if (!capture.committed) throw new Error('No playable recording was saved.');
+    const complete = { ...S.session, status: 'complete', durationMs: duration, poster: recordingPoster() };
+    await DB.putSession(complete);
+    S.session = complete;
+    saved = true;
+    logRecording('recording_completed', capture.id, { durationMs: duration, savedChunks: capture.committed });
   } catch (error) {
-    toast('Could not save recording: ' + error.message, true);
-    return;
+    capture.accepting = false;
+    await capture.pending;
+    capture.error ||= 'Could not finish saving the recording.';
+    toast(capture.error, true);
+    logRecording('recording_finalize_failed', capture.id, { error: errorName(error) });
   } finally {
-    S.saving = false;
-    S.recording = false;
-    S.paused = false;
-    S.pauseAt = null;
-    $('timer').textContent = '00:00';
-    updateControls();
+    closeCapture(capture);
   }
-  await openSession(S.session.id);
+  if (saved) {
+    try {
+      if (!await openSession(capture.id)) toast('The saved recording is unavailable for preview.', true);
+    } catch (error) {
+      logRecording('recording_preview_failed', capture.id, { error: errorName(error) });
+      toast('The recording was saved but could not be previewed.', true);
+    }
+  }
+  else await showRecoveryNotice(capture.id);
+}
+
+async function interruptRecording(reason, simulation = false) {
+  if (!S.recording || S.saving) return;
+  const capture = S.capture;
+  capture.accepting = false;
+  capture.discardPending = true;
+  capture.error = reason;
+  S.saving = true;
+  updateControls();
+  logRecording(simulation ? 'simulated_recording_interruption' : 'recording_interrupted', capture.id, { elapsedMs: Math.round(recElapsed()) });
+  window.dispatchEvent(new Event('recording-stopped'));
+  // Release the encoders, but discard their final data and leave the session unfinished.
+  stopTrackRecorders();
+  await capture.pending;
+  closeCapture(capture);
+  toast(reason, true);
+  if (!simulation) await showRecoveryNotice(capture.id);
+}
+
+async function showRecoveryNotice(id) {
+  try {
+    const sessions = await recoverRecordings();
+    const recovered = sessions.filter(s => s.recovered && (import.meta.env.DEV || !s.stressTest));
+    if (id && !recovered.some(s => s.id === id)) return;
+    if (recovered.length) $('recoveryNotice').classList.remove('hidden');
+  } catch (error) {
+    logRecording('recovery_scan_failed', id, { error: errorName(error) });
+  }
+}
+
+function recordingPoster() {
+  const video = $('camPreview');
+  if (!S.camOn || !video.videoWidth || !video.videoHeight) return undefined;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 480;
+    canvas.height = Math.round(canvas.width * video.videoHeight / video.videoWidth);
+    const context = canvas.getContext('2d');
+    if (!context) return undefined;
+    context.translate(canvas.width, 0);
+    context.scale(-1, 1);
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/webp', 0.76);
+  } catch {
+    return undefined;
+  }
 }
 
 /* ---------------- Review ---------------- */
-const rv = { cam: null, scr: null, cur: null, urls: [], delta: 0, raf: null };
+const rv = { cam: null, scr: null, primary: null, cur: null, urls: [], delta: 0, raf: null };
 
 async function openSession(id) {
   const s = await DB.getSession(id);
-  if (!s) return toast('Recording not found.', true);
-  const chunks = await DB.getChunks(id);
-  const blobs = {};
-  for (const name of Object.keys(s.tracks)) {
-    const parts = chunks.filter(c => c.track === name).sort((a, b) => a.seq - b.seq).map(c => c.blob);
-    blobs[name] = new Blob(parts, { type: s.tracks[name].mime });
-  }
+  if (s?.status !== 'complete' || (s.stressTest && !import.meta.env.DEV)) return false;
+  const files = await readRecordingFiles(s, await DB.getChunks(id));
+  const blobs = Object.fromEntries(Object.entries(files).map(([name, file]) => [name, file.blob]));
+  const hasCamera = !!blobs.camera?.size;
+  const hasScreen = !!blobs.screen?.size;
+  if (!hasCamera && !hasScreen) return false;
   rv.urls.forEach(u => URL.revokeObjectURL(u)); rv.urls = [];
   rv.cur = { s, blobs };
   rv.cam = $('rvCam'); rv.scr = $('rvScreen');
   const url = b => { const u = URL.createObjectURL(b); rv.urls.push(u); return u; };
-  rv.cam.src = url(blobs.camera);
+  rv.primary = hasCamera ? rv.cam : rv.scr;
+  if (hasCamera) rv.cam.src = url(blobs.camera); else rv.cam.removeAttribute('src');
   rv.scr.style.visibility = '';
-  const hasScreen = !!blobs.screen?.size;
+  for (const id of ['btnDownloadCamera', 'btnDownloadAll', 'btnLocalCamera']) $(id).classList.toggle('hidden', !hasCamera);
   $('btnDownloadSlides').classList.toggle('hidden', !hasScreen);
+  $('btnLocalSlides').classList.toggle('hidden', !hasScreen);
   if (hasScreen) rv.scr.src = url(blobs.screen); else rv.scr.removeAttribute('src');
   rv.scr.muted = true;
   setLayout(hasScreen ? 'screen' : 'cam');
-  $('layouts').classList.toggle('hidden', !hasScreen);
+  $('layouts').classList.toggle('hidden', !hasCamera || !hasScreen);
   rv.delta = hasScreen ? ((s.tracks.screen?.offsetMs || 0) - (s.tracks.camera?.offsetMs || 0)) / 1000 : 0;
 
   $('rvTitle').textContent = s.title;
-  const screenNote = hasScreen ? 'Muted slides' : 'No slides';
+  const screenNote = [hasScreen ? 'Muted slides' : 'No slides', s.recovered ? 'Recovered' : ''].filter(Boolean).join(' · ');
   $('rvMeta').textContent = [new Date(s.createdAt).toLocaleString(), fmtTime(s.durationMs / 1000), screenNote].join(' | ');
   $('rvWarn').classList.add('hidden');
   show('review');
-  await Promise.all([fixDuration(rv.cam), hasScreen ? fixDuration(rv.scr) : null]);
+  await Promise.all([hasCamera ? fixDuration(rv.cam) : null, hasScreen ? fixDuration(rv.scr) : null]);
   seekTo(0);
   updateTransport();
 
   const warns = [...(s.issues || [])];   // problems detected during recording
   const expect = s.durationMs / 1000;
-  if (isFinite(rv.cam.duration) && s.status === 'complete' && Math.abs(rv.cam.duration - expect) > 2)
+  if (!s.recovered && isFinite(rv.cam.duration) && s.status === 'complete' && Math.abs(rv.cam.duration - expect) > 2)
     warns.push(`The camera file is ${fmtTime(rv.cam.duration)} but the session ran ${fmtTime(expect)}.`);
-  if (hasScreen && isFinite(rv.scr.duration) && s.status === 'complete' && Math.abs(rv.scr.duration - ((s.tracks.screen.endedAtMs ?? s.durationMs) - (s.tracks.screen.offsetMs || 0)) / 1000) > 2)
+  if (!s.recovered && hasScreen && isFinite(rv.scr.duration) && s.status === 'complete' && Math.abs(rv.scr.duration - ((s.tracks.screen.endedAtMs ?? s.durationMs) - (s.tracks.screen.offsetMs || 0)) / 1000) > 2)
     warns.push(`The screen file is ${fmtTime(rv.scr.duration)} but the session ran ${fmtTime(expect)}.`);
   if (warns.length) { $('rvWarn').textContent = 'Check this recording: ' + warns.join(' '); $('rvWarn').classList.remove('hidden'); }
+  return true;
 }
 
-function fixDuration(v) {   // MediaRecorder WebM has no duration header; force the browser to find it
-  return new Promise(res => {
-    const go = () => {
-      if (isFinite(v.duration)) return res();
-      const onTU = () => { v.removeEventListener('timeupdate', onTU); v.currentTime = 0; res(); };
-      v.addEventListener('timeupdate', onTU); v.currentTime = 1e101;
+function fixDuration(video) {
+  return new Promise(resolve => {
+    const finish = () => {
+      clearTimeout(timeout);
+      video.removeEventListener('loadedmetadata', seekToEnd);
+      video.removeEventListener('seeked', finish);
+      video.removeEventListener('error', finish);
+      resolve();
     };
-    v.readyState >= 1 ? go() : v.addEventListener('loadedmetadata', go, { once: true });
+    const seekToEnd = () => {
+      if (Number.isFinite(video.duration)) return finish();
+      video.addEventListener('seeked', finish, { once: true });
+      video.currentTime = 1e101;
+    };
+    const timeout = setTimeout(finish, 4500);
+    video.addEventListener('error', finish, { once: true });
+    if (video.readyState >= 1) seekToEnd();
+    else video.addEventListener('loadedmetadata', seekToEnd, { once: true });
   });
 }
-const duration = () => isFinite(rv.cam.duration) ? rv.cam.duration : (rv.cur.s.durationMs / 1000);
+function duration() {
+  if (Number.isFinite(rv.primary.duration)) return rv.primary.duration;
+  const offset = rv.primary === rv.scr ? rv.cur.s.tracks.screen.offsetMs || 0 : 0;
+  return Math.max(0, rv.cur.s.durationMs - offset) / 1000;
+}
 
 function syncScreen(force) {
-  if (!rv.scr.getAttribute('src')) return;
+  if (rv.primary !== rv.cam || !rv.scr.getAttribute('src')) return;
   const target = rv.cam.currentTime - rv.delta;
   const track = rv.cur.s.tracks.screen;
   const shareDuration = ((track.endedAtMs ?? rv.cur.s.durationMs) - (track.offsetMs || 0)) / 1000;
@@ -752,29 +948,37 @@ function syncScreen(force) {
   if (force || (!rv.scr.seeking && Math.abs(rv.scr.currentTime - target) > 0.5)) rv.scr.currentTime = target;
   if (!rv.cam.paused && rv.scr.paused) rv.scr.play().catch(() => {});
 }
-function seekTo(sec) { rv.cam.currentTime = Math.max(0, sec); syncScreen(true); updateTransport(); }
+function seekTo(sec) { rv.primary.currentTime = Math.max(0, sec); syncScreen(true); updateTransport(); }
 function updateTransport() {
   const d = duration();
-  $('tpSeek').value = d ? Math.round(rv.cam.currentTime / d * 1000) : 0;
-  $('tpTime').textContent = `${fmtTime(rv.cam.currentTime)} / ${fmtTime(d)}`;
-  $('tpPlay').textContent = rv.cam.paused ? '\u25B6' : '\u275A\u275A';
+  $('tpSeek').value = d ? Math.round(rv.primary.currentTime / d * 1000) : 0;
+  $('tpTime').textContent = `${fmtTime(rv.primary.currentTime)} / ${fmtTime(d)}`;
+  $('tpPlay').textContent = rv.primary.paused ? '\u25B6' : '\u275A\u275A';
 }
 function loop() {
   syncScreen(); updateTransport();
-  rv.raf = rv.cam.paused ? null : requestAnimationFrame(loop);
+  rv.raf = rv.primary.paused ? null : requestAnimationFrame(loop);
 }
 $('tpPlay').onclick = async () => {
-  if (rv.cam.paused) {
-    try { await rv.cam.play(); }
+  if (rv.primary.paused) {
+    try { await rv.primary.play(); }
     catch (error) { return toast('Playback could not start: ' + error.message, true); }
     syncScreen(true); cancelAnimationFrame(rv.raf); rv.raf = requestAnimationFrame(loop);
   }
-  else { rv.cam.pause(); rv.scr.pause(); }
+  else { rv.primary.pause(); }
   updateTransport();
 };
 $('tpSeek').oninput = e => seekTo(e.target.value / 1000 * duration());
-['pause', 'ended'].forEach(ev => $('rvCam').addEventListener(ev, () => { rv.scr.pause(); updateTransport(); }));
-$('rvCam').addEventListener('seeked', () => { if (rv.cur) syncScreen(true); });
+for (const video of [$('rvCam'), $('rvScreen')]) {
+  for (const event of ['pause', 'ended']) {
+    video.addEventListener(event, () => {
+      if (video !== rv.primary) return;
+      if (video === rv.cam) rv.scr.pause();
+      updateTransport();
+    });
+  }
+  video.addEventListener('seeked', () => { if (video === rv.primary) syncScreen(true); });
+}
 function setLayout(name) {   // 'cam' = camera only, 'screen' = slides only; hidden video keeps playing its audio
   document.querySelectorAll('.layouts button').forEach(x => x.classList.toggle('active', x.dataset.layout === name));
   $('viewer').className = 'viewer layout-' + name;
@@ -794,17 +998,18 @@ async function downloadRecording(kind, button) {
   const screen = kind === 'camera' ? null : blobs.screen;
   if ((kind !== 'screen' && !camera?.size) || (kind === 'screen' && !screen?.size))
     return toast('The required recording track is missing.', true);
-  if (s.status !== 'complete' || s.issues?.length) return toast('This recording was interrupted. Make a complete recording before exporting.', true);
+  if (s.status !== 'complete') return toast('Open a saved recording before exporting.', true);
   const label = button.textContent;
   button.disabled = true;
   button.textContent = 'Preparing…';
+  logRecording('export_started', s.id, { format: kind === 'all' ? 'zip' : 'mp4', track: kind });
   const metadata = {
     kind, cameraBytes: camera?.size || 0, screenBytes: screen?.size || 0,
     durationMs: Math.max(s.durationMs,
       Number.isFinite(rv.cam.duration) ? Math.ceil(rv.cam.duration * 1000) + (s.tracks.camera?.offsetMs || 0) : 0,
       Number.isFinite(rv.scr.duration) ? Math.ceil(rv.scr.duration * 1000) + (s.tracks.screen?.offsetMs || 0) : 0),
-    cameraOffset: s.tracks.camera?.offsetMs || 0,
-    screenOffset: s.tracks.screen?.offsetMs || 0
+    cameraOffset: camera ? s.tracks.camera?.offsetMs || 0 : 0,
+    screenOffset: screen ? s.tracks.screen?.offsetMs || 0 : 0
   };
   try {
     const response = await fetch('/api/export', {
@@ -815,8 +1020,10 @@ async function downloadRecording(kind, button) {
     const file = await response.blob();
     const extension = { all: '.zip', camera: '-camera-mic.mp4', screen: '-slides-muted.mp4' }[kind];
     dl(file, base + extension);
+    logRecording('export_completed', s.id, { track: kind, bytes: file.size });
   } catch (error) {
-    toast('Export failed: ' + error.message, true);
+    logRecording('export_failed', s.id, { track: kind, error: errorName(error) });
+    toast('Export failed. You can still download the original WebM tracks.', true);
   } finally {
     button.disabled = false;
     button.textContent = label;
@@ -829,6 +1036,19 @@ for (const [id, kind] of [
   const button = $(id);
   button.onclick = () => downloadRecording(kind, button);
 }
+
+function downloadLocalTrack(session, track, blob) {
+  if (!blob?.size) return toast('The saved track could not be downloaded.', true);
+  try {
+    dl(blob, slug(session.title) + (track === 'camera' ? '-camera-mic' : '-slides-muted') + '.webm');
+    logRecording('local_download_requested', session.id, { track, bytes: blob.size, recovered: !!session.recovered });
+  } catch (error) {
+    logRecording('export_failed', session.id, { track, error: errorName(error) });
+    toast('Could not download the local track.', true);
+  }
+}
+$('btnLocalCamera').onclick = () => downloadLocalTrack(rv.cur.s, 'camera', rv.cur.blobs.camera);
+$('btnLocalSlides').onclick = () => downloadLocalTrack(rv.cur.s, 'screen', rv.cur.blobs.screen);
 
 const stage = $('view-studio');
 const setup = $('view-record');
@@ -1050,7 +1270,7 @@ $('btnStopScreen').onclick = onScreenEnded;
 $('btnCamToggle').onclick = () => toggleDevice('cam');
 $('btnMicToggle').onclick = () => toggleDevice('mic');
 $('btnStart').onclick = async () => {
-  if (S.recording || S.countingDown || S.switchingDevices || S.choosingScreen || !S.cam) return;
+  if (S.recording || S.starting || S.saving || S.countingDown || S.switchingDevices || S.choosingScreen || !S.cam) return;
   const overlay = $('recordCountdown');
   const screen = S.screen;
   S.countingDown = true;
@@ -1077,10 +1297,17 @@ $('btnStart').onclick = async () => {
 };
 $('btnPause').onclick = togglePause;
 $('btnStop').onclick = stopRecording;
-window.addEventListener('beforeunload', e => { if (S.recording) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', e => { if (S.recording && !S.capture?.discardPending) { e.preventDefault(); e.returnValue = ''; } });
 
 updateControls();
-if (!navigator.mediaDevices || !window.MediaRecorder) toast('This browser does not support recording. Use Chrome or Edge.', true);
+const reviewId = new URLSearchParams(location.search).get('session');
+if (reviewId) {
+  const reviewError = () => {
+    show('unavailable');
+  };
+  $('view-record').classList.add('hidden');
+  recoverRecordings().then(() => openSession(reviewId)).then(found => { if (!found) reviewError(); }).catch(reviewError);
+} else if (!navigator.mediaDevices || !window.MediaRecorder) toast('This browser does not support recording. Use Chrome or Edge.', true);
 else {
   const refreshDeviceList = () => {
     refreshDevices().catch(error => toast('Could not refresh devices: ' + error.message, true));
@@ -1097,6 +1324,12 @@ else {
     $(id).addEventListener('pointerdown', refreshDeviceList);
   }
   openCamera();
+  void showRecoveryNotice();
 }
 window.CPE = { S, rv, buildPipeline, startRecording, stopRecording, openSession, DB, startMeters, updateControls, attachScreenMeter, recElapsed,
   canShare, shareScreen, attachSharedStream, toast };
+if (import.meta.env.DEV) {
+  void import('./recording-stress.js').then(({ addStressPanel }) => addStressPanel({
+    $, S, startRecording, interruptRecording, formatBytes, downloadLocalTrack,
+  }));
+}

@@ -1,4 +1,4 @@
-"""Run the recording project with: python server.py"""
+"""Private local media service for Mosaic Web."""
 from __future__ import annotations
 
 import argparse
@@ -14,15 +14,11 @@ import threading
 import hmac
 import re
 import signal
-from http.cookies import SimpleCookie
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
 from presentations import store as presentations, MAX_BYTES
-
-ROOT = Path(__file__).resolve().parent
-
 
 def save_upload(source, path, remaining):
     with path.open("wb") as stream:
@@ -71,30 +67,15 @@ def encode_video(source, target, offset_ms, frames, audio, mirror=False):
         raise RuntimeError("Could not encode " + target.name + ": " + result.stderr.decode(errors="replace")[-400:])
 
 
-class Handler(SimpleHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(ROOT), **kwargs)
-
+class Handler(BaseHTTPRequestHandler):
     def authorized(self):
-        token = os.environ.get("CPE_DESKTOP_TOKEN")
-        if not token:
-            return True  # Retain the original browser development mode.
-        cookie = SimpleCookie()
-        try:
-            cookie.load(self.headers.get("Cookie", ""))
-            supplied = cookie.get("cpe-session")
-            valid = supplied and hmac.compare_digest(supplied.value, token)
-        except Exception:
-            valid = False
-        if self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}":
-            valid = False
-        if not valid:
-            self.send_error(403)
-        return bool(valid)
-
-    def do_HEAD(self):
-        # Avoid the inherited handler exposing files outside the public asset list.
-        self.send_error(405)
+        token = os.environ.get("CPE_MEDIA_TOKEN")
+        supplied = self.headers.get("Authorization", "")
+        valid = bool(token) and hmac.compare_digest(supplied.encode(), f"Bearer {token}".encode())
+        if not valid or self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}":
+            self.reply(403, {"error": "The media service only accepts requests from Mosaic Web."})
+            return False
+        return True
 
     def do_GET(self):
         if not self.authorized():
@@ -117,27 +98,11 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception:
                 self.reply(422, {'error': 'This slide could not be displayed. Reopen the presentation and try again.'})
             return
-        assets = {
-            "/", "/index.html", "/styles.css", "/app.js",
-            "/camera-effects.js", "/camera-effects-worker.js", "/effects-panel.js",
-            "/host-name.js", "/teleprompter.js", "/teleprompter.css", "/teleprompter.html",
-            "/presentations.js", "/presentations.css",
-            "/models/selfie_multiclass_256x256.tflite",
-            "/models/face_landmarker.task", "/vendor/mediapipe/vision_bundle.mjs",
-            "/vendor/mediapipe/wasm/vision_wasm_internal.js",
-            "/vendor/mediapipe/wasm/vision_wasm_internal.wasm",
-            "/vendor/mediapipe/wasm/vision_wasm_nosimd_internal.js",
-            "/vendor/mediapipe/wasm/vision_wasm_nosimd_internal.wasm",
-        }
-        if path not in assets:
-            self.send_error(404)
-            return
-        super().do_GET()
+        self.reply(404, {"error": "Media endpoint not found."})
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'")
         super().end_headers()
 
     def reply(self, status, body):
@@ -256,7 +221,7 @@ if __name__ == "__main__":
             sys.stdin.buffer.read()
             server.shutdown()
         threading.Thread(target=watch_parent, daemon=True).start()
-    print(f"CPE Studio: http://localhost:{args.port}\nPress Ctrl+C to stop.", flush=True)
+    print(f"CPE media service listening on {server.server_port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

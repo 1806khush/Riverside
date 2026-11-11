@@ -1,6 +1,6 @@
 'use strict';
 
-class CameraEffects {
+export class CameraEffects {
   constructor(onState) {
     this.onState = onState;
     this.enabled = false;

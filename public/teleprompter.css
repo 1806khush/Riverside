@@ -95,3 +95,6 @@
 @media (prefers-reduced-motion: reduce) {
   .teleprompter-panel .teleprompter-header, .teleprompter-panel .teleprompter-footer { transition: none; }
 }
+
+.host-appearance-panel { background: var(--mw-raised, #202023); border-color: var(--mw-line, #3b3b40); }
+.name-size-options button[aria-pressed="true"] { background: var(--mw-hover, #383040); }

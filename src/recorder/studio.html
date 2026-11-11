@@ -1,17 +1,5 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CPE Studio AI</title>
-  <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="presentations.css">
-  <link rel="stylesheet" href="teleprompter.css">
-</head>
-<body>
 <header>
-  <a class="brand" href="/" aria-label="CPE Studio home"><span class="brand-mark">cpe</span><strong>Studio</strong></a>
+  <a class="brand" href="/" aria-label="Mosaic Web library"><img src="/mosaic-web-logo.svg" alt="Mosaic Web" width="140" height="47"></a>
   <div id="studioTitleSlot" class="studio-title-slot"></div>
   <button id="btnPeopleSidebar" class="people-sidebar-toggle" type="button" aria-expanded="true" aria-controls="studioRail peoplePanel" aria-label="Hide People sidebar" title="Hide People sidebar">
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16m-6-11 3 3-3 3"/></svg>
@@ -23,6 +11,10 @@
 <div id="screenGlowRing" class="screen-glow-ring hidden" aria-hidden="true"></div>
 
 <main>
+  <div id="recoveryNotice" class="warn hidden" role="status">Recovered recordings are ready to review. <a href="/">Open your recording library</a></div>
+  <section id="view-unavailable" class="view hidden" aria-labelledby="unavailable-title">
+    <div class="page-heading"><div><h1 id="unavailable-title">Recording unavailable</h1><p class="muted">This recording could not be opened in this browser.</p><a class="mw-button mw-button-primary" href="/">Back to recordings</a></div></div>
+  </section>
   <!-- ============ RECORD ============ -->
   <section id="view-record" class="view setup-mode">
     <div class="page-heading"><div><span class="eyebrow">RECORDING STUDIO</span><h1>Make room for your next lecture.</h1><p class="muted">Check your setup, share your slides, and press record.</p></div></div>
@@ -96,7 +88,7 @@
             </div>
           </div><button id="btnStopScreen" class="hidden">Stop sharing</button><button id="btnEnable" class="primary hidden">Retry camera</button>
         </div>
-        <div class="controls"><div class="time-group"><span id="recBadge" class="badge hidden">REC</span><span id="timer" class="timer">00:00</span></div><div class="record-actions"><button id="btnPause" disabled>Pause</button><button id="btnStop" disabled>Stop &amp; save</button><button id="btnStart" class="rec" disabled><span class="record-dot"></span> Start recording</button></div></div>
+        <div class="controls"><div class="time-group"><span id="recBadge" class="badge hidden">REC</span><span id="timer" class="timer">00:00</span><div id="recordingStorageStatus" class="recording-storage hidden"><span id="recordingStorageDetails"></span><span id="recordingStorageError" role="alert"></span></div></div><div class="record-actions"><button id="btnPause" disabled>Pause</button><button id="btnStop" disabled>Stop &amp; save</button><button id="btnStart" class="rec" disabled><span class="record-dot"></span> Start recording</button></div></div>
           <button id="btnTeleprompter" class="studio-tools" type="button" aria-pressed="false" aria-controls="teleprompterPanel"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m3 6 4 3-4 3V6Z M10 6h11M10 10h11M3 16h18M3 20h14"/></svg>Teleprompter</button>
           <button id="btnLayout" class="studio-tools" aria-expanded="false" aria-controls="stageLayouts">Layout</button>
           <button id="btnLeave" class="studio-tools">Leave</button>
@@ -182,7 +174,11 @@
           <button id="btnDownloadSlides">Muted slides MP4</button>
           <button id="btnDownloadAll" class="primary">Download all (ZIP)</button>
         </div>
-        <p class="muted small">ZIP with camera + mic MP4 and muted slides MP4 when recorded.</p>
+        <div class="row">
+          <button id="btnLocalCamera">Original camera WebM</button>
+          <button id="btnLocalSlides">Original slides WebM</button>
+        </div>
+        <p class="muted small">Original WebM tracks can be downloaded offline. MP4 and ZIP use the media server.</p>
       </div>
 
     </div>
@@ -261,11 +257,3 @@
     </div>
   </div>
 </aside>
-<script src="camera-effects.js"></script>
-<script src="app.js"></script>
-<script src="presentations.js"></script>
-<script src="effects-panel.js"></script>
-<script src="host-name.js"></script>
-<script src="teleprompter.js"></script>
-</body>
-</html>

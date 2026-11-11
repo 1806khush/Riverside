@@ -1,47 +1,39 @@
-# CPE Studio desktop app
+# Mosaic Web
 
-This folder contains the independent desktop application, version **1.5.2**. Its interface and Python service were recovered from the existing version 1.5.2 build. The Electron shell, build scripts, bundled runtime, installed build dependencies, and generated app were restored alongside them. No application features were changed for this folder organization.
+Mosaic Web is the browser recording workspace for CPE. It uses the same React, TypeScript, TanStack Start, Vite, and Nitro stack as Mosaic Studio.
 
-The existing app bundle is `dist/mac-arm64/CPE Studio.app`. The separately installed `/Applications/CPE Studio.app` is unchanged. Application recordings and preferences remain in the existing app profile; this reorganization does not move or modify them.
+The browser captures camera and microphone, a shared screen or PDF slides, and stores recording chunks in IndexedDB. It can review the tracks together and download separate synchronized MP4s or one ZIP containing both. Camera effects run in the browser with MediaPipe. The teleprompter can dock, overlay the preview, or open in a browser popup.
 
-## Existing functionality
+## Run locally
 
-Camera/microphone recording, screen/window sharing, PDF uploads and recorded slide changes, the 16:9 shared-content frame and stop-sharing menu, device controls, stage layouts, host-name appearance, all three teleprompter modes, camera effects, screen glow, review, and MP4/ZIP downloads remain as in version 1.5.2. Transcript generation, Magic Audio, and Eye Contact remain removed. PDF upload support remains PDF-only.
-
-The interface is local to the desktop app. Electron starts its own Python service on `127.0.0.1:17863`. This is separate from the hosted service in `../mosaic-web/`. The source uses paths relative to this folder, so the new parent-folder name does not change its backend or asset locations.
-
-## Development and packaging
-
-Run maintainer commands from this folder, not the Riverside root or the Mosaic Web folder. The restored build is for Apple Silicon with macOS 26 or later. Node.js 22.12+ is required for development. Python runtime setup is for maintainers; end users open the built app.
-
-```sh
-npm start
-```
-
-Existing build dependencies and `.build/runtime` are retained locally. For a fresh checkout, prepare dependencies and runtime:
+Use Node.js 22.12 or later, [uv](https://docs.astral.sh/uv/getting-started/installation/), and Chrome or Edge.
 
 ```sh
 npm ci
 npm run setup
+npm run dev
 ```
 
-Build on the target platform:
+Open [http://localhost:3200](http://localhost:3200). Allow camera and microphone access in the browser. The browser also controls screen-sharing and teleprompter popup permissions. Camera and screen capture require localhost or HTTPS.
+
+`npm run setup` prepares a Python 3.12 environment under `.build/web-python`. The web launcher starts the private Python media service on a temporary loopback port, then starts TanStack. The browser calls the same-origin `/api` routes. Only the server has the per-run token for PDF rendering and FFmpeg export.
+
+## Build and verify
 
 ```sh
-npm run package
-npm run dist
+npm run build
+npm run check
+npm run test:media
+npm start
 ```
 
-`package` creates the app directory in `dist/`; `dist` also creates the platform installer. The current Mac build is locally signed. Existing camera/microphone/screen permissions remain managed by the operating system.
+`npm start` serves the production build on localhost. `PORT` overrides the web port. `CPE_PYTHON` can point to an existing Python 3.12 executable with the dependencies from `requirements.txt`.
+
+This branch is a local browser workflow. Browser recordings and settings belong to the browser’s origin and profile. Export any existing desktop recordings from their original app profile. They do not appear automatically in the browser.
 
 ## Source map
 
-- `app.js`, `index.html`, `styles.css`: desktop recording interface, review, and exports.
-- `electron/`: existing desktop shell and validation source.
-- `server.py`, `presentations.py`: original local export and PDF service.
-- `presentations.js`, `presentations.css`: PDF preview, filmstrip, and slide-recording stream.
-- `host-name.js`, `teleprompter.*`, `camera-effects*`, `effects-panel.js`: existing studio features.
-- `scripts/`: runtime/model preparation and existing validation source.
-- `.build/`, `node_modules/`, `dist/`: local runtime, dependencies, and generated builds; excluded from Git.
-
-No application tests, browser tests, builds, or app launches were performed during this file reorganization. The original older prototype is not used by this application.
+- `src/routes/` contains the TanStack page and media API routes.
+- `src/recorder/` contains the existing recording engine and view, loaded after the browser mounts the recording page.
+- `public/` contains MediaPipe assets, models, and the teleprompter popup document.
+- `server.py` and `presentations.py` handle local FFmpeg export and PDF rendering.

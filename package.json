@@ -1,86 +1,33 @@
 {
-  "name": "cpe-studio",
-  "productName": "CPE Studio",
+  "name": "mosaic-web",
   "version": "1.5.2",
   "private": true,
-  "description": "Local lecture recording studio with PDF slides and teleprompter",
-  "author": "CPE Studio",
-  "main": "electron/main.cjs",
+  "type": "module",
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
-    "setup": "node scripts/setup-runtime.cjs",
-    "start": "electron .",
-    "check": "node --check electron/main.cjs && node --check electron/smoke.cjs && node --check scripts/setup-runtime.cjs && node --check app.js && node --check host-name.js && node --check teleprompter.js && node --check camera-effects.js && node --check camera-effects-worker.js && node --check effects-panel.js && node --check presentations.js && node --check scripts/setup-camera-models.cjs",
-    "test": "electron . --smoke-test",
-    "package": "node scripts/check-runtime.cjs && electron-builder --dir",
-    "dist": "node scripts/check-runtime.cjs && electron-builder"
+    "setup": "node scripts/setup-media.mjs",
+    "dev": "node scripts/run-web.mjs dev",
+    "build": "vite build",
+    "start": "node scripts/run-web.mjs start",
+    "check": "tsc --noEmit",
+    "test:media": "node scripts/run-web.mjs test"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "2.1.10",
+    "@tanstack/react-router": "1.170.41",
+    "@tanstack/react-start": "1.168.60",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
-    "electron": "45.2.3",
-    "electron-builder": "^26.0.0"
-  },
-  "build": {
-    "appId": "edu.cpe.studio.electron",
-    "productName": "CPE Studio",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "electron/**/*.cjs",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": ".build/runtime",
-        "to": "runtime",
-        "filter": [
-          "**/*",
-          "!**/__pycache__/**",
-          "!**/*.pyc"
-        ]
-      },
-      {
-        "from": ".",
-        "to": "studio",
-        "filter": [
-          "*.html",
-          "*.css",
-          "*.js",
-          "server.py",
-          "vendor/**/*",
-          "models/face_landmarker.task",
-          "models/selfie_multiclass_256x256.tflite",
-          "presentations.py"
-        ]
-      }
-    ],
-    "asar": true,
-    "mac": {
-      "target": [
-        "dmg"
-      ],
-      "identity": "-",
-      "hardenedRuntime": false,
-      "minimumSystemVersion": "26.0",
-      "category": "public.app-category.education",
-      "extendInfo": {
-        "NSCameraUsageDescription": "CPE Studio uses your camera to record lectures locally.",
-        "NSMicrophoneUsageDescription": "CPE Studio records lecture audio locally.",
-        "NSScreenCaptureUsageDescription": "CPE Studio records the presentation you choose to share."
-      }
-    },
-    "win": {
-      "target": [
-        "nsis"
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true
-    },
-    "artifactName": "CPE-Studio-${version}-${os}-${arch}.${ext}"
+    "@types/node": "26.6.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "nitro": "3.0.260903-beta",
+    "typescript": "5.9.3",
+    "vite": "8.3.2"
   }
 }
